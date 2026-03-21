@@ -1,0 +1,17 @@
+# Odyssey Agent Skills - Python Dependencies
+
+# Sui SDK
+pysui>=0.50.0
+
+# Type validation (optional)
+pydantic>=2.0
+
+# Async support (optional)
+aiohttp>=3.9.0
+
+# Testing
+pytest>=7.0
+pytest-asyncio>=0.21
+
+# HTTP client (for backend calls)
+httpx>=0.25.0
