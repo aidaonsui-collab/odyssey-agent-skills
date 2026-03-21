@@ -13,13 +13,40 @@ pip install -r requirements.txt
 ### 2. Set Wallet
 
 ```bash
+# Option 1: Just set address (for read-only operations)
 export WALLET_ADDRESS=0x_your_wallet_address_here
+
+# Option 2: Full credentials (for signing transactions)
+export WALLET_ADDRESS=0x_your_wallet_address_here
+export WALLET_MNEMONIC="word1 word2 word3 ... word24"
+
+# Network (default: mainnet)
+export SUI_NETWORK=https://fullnode.mainnet.sui.io:443
+# For testnet:
+# export SUI_NETWORK=https://fullnode.testnet.sui.io:443
 ```
 
-### 3. Run Example
+### 3. CLI Usage
+
+```bash
+# Calculate price
+python -m odyssey_agent_skills price --sui 10
+
+# Launch a token (dry run)
+python -m odyssey_agent_skills launch --name "My Token" --ticker MINE --sui 50 --dry-run
+
+# Buy tokens (dry run)
+python -m odyssey_agent_skills buy --pool 0x... --token 0x... --sui 10 --dry-run
+
+# Sell tokens (dry run)
+python -m odyssey_agent_skills sell --pool 0x... --token 0x... --amount 1000 --dry-run
+```
+
+### 4. Run Example
 
 ```bash
 python examples/launch_and_first_buy.py
+python examples/sell_after_launch.py
 ```
 
 ## Skills
@@ -163,22 +190,28 @@ agent = create_react_agent(
 
 ```
 odyssey-agent-skills/
+├── odyssey_agent_skills/      # CLI package
+│   ├── __init__.py
+│   └── __main__.py            # CLI entry point
 ├── skills/
 │   ├── sui-token-launch/
-│   │   ├── launcher.py      # Main implementation
+│   │   ├── launcher.py        # Main implementation
 │   │   ├── __init__.py
-│   │   └── SKILL.md         # Full documentation
+│   │   └── SKILL.md
 │   ├── sui-bonding-curve-trade/
-│   │   ├── trader.py        # Main implementation
-│   │   ├── tests/           # Unit tests
+│   │   ├── trader.py          # Main implementation
+│   │   ├── tests/            # Unit tests
 │   │   ├── __init__.py
 │   │   └── SKILL.md
 │   └── onlyfence-guardrails/
-│       ├── guardrails.py    # Main implementation
+│       ├── guardrails.py      # Main implementation
+│       ├── tests/             # Guardrail tests
 │       ├── __init__.py
 │       └── SKILL.md
 ├── examples/
 │   ├── launch_and_first_buy.py
+│   ├── launch_buy_demo.py     # Full demo with guardrails
+│   ├── sell_after_launch.py   # P&L scenarios
 │   └── langchain_example.py
 ├── requirements.txt
 ├── pyproject.toml
@@ -200,8 +233,9 @@ python -m pytest tests/ -v
 - [x] Tool schemas
 - [x] Unit tests
 - [x] Example scripts
+- [x] CLI interface
 - [ ] TypeScript/JavaScript implementations
-- [ ] Real wallet integration
+- [ ] Real wallet integration (pysui)
 - [ ] Live testnet deployment
 
 ## Dependencies
