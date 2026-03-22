@@ -42,6 +42,27 @@ python -m odyssey_agent_skills buy --pool 0x... --token 0x... --sui 10 --dry-run
 python -m odyssey_agent_skills sell --pool 0x... --token 0x... --amount 1000 --dry-run
 ```
 
+### 4. x402 Payment (Auto-Create)
+
+Auto-create requires x402 micro-payment (0.05 SUI) to prevent spam:
+
+```bash
+# 1. Get payment invoice
+curl https://your-backend.railway.app/api/v1/payment/invoice
+
+# 2. Send SUI to the payTo address with invoiceId as memo
+
+# 3. Confirm payment
+curl -X POST https://your-backend.railway.app/api/v1/payment/confirm \
+  -d '{"invoiceId": "inv_xxx", "txDigest": "your_tx_digest"}'
+
+# 4. Now call auto-create with payment proof
+curl -X POST https://your-backend.railway.app/api/v1/tokens/auto-create \
+  -d '{"name": "MyToken", ..., "paymentInvoiceId": "inv_xxx", "paymentTxDigest": "your_tx_digest"}'
+```
+
+See `SKILL.md` for full Python implementation.
+
 ### 4. Run Example
 
 ```bash

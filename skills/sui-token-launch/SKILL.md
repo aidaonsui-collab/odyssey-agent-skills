@@ -201,3 +201,141 @@ if __name__ == "__main__":
    └── POST /memecoins/create
        └── Body: name, ticker, desc, creator, coinAddress
 ```
+
+## x402 Payment (Auto-Create Endpoint)
+
+The `POST /api/v1/tokens/auto-create` endpoint requires x402 micro-payment to prevent spam.
+
+### Payment Flow
+
+```
+1. GET /api/v1/payment/invoice
+   └── Returns: invoiceId, amountSui, payTo address
+
+2. Agent sends SUI to payTo address
+   └── Transfer: exact amountSUI to payTo
+   └── Memo: invoiceId (for tracking)
+
+3. POST /api/v1/payment/confirm
+   └── Body: { invoiceId, txDigest }
+   └── Verifies payment on-chain
+
+4. POST /api/v1/tokens/auto-create
+   └── Body: { ..., paymentInvoiceId, paymentTxDigest }
+   └── Executes if payment verified
+```
+
+### x402 Payment Example
+
+```python
+import httpx
+from pysui import SuiClient, SuiConfig
+from pysui.keypair import Keypair
+
+BACKEND_URL = "https://your-odyssey-backend.railway.app"
+
+async def launch_with_payment(
+    wallet: Keypair,
+    token_name: str,
+    ticker: str,
+    description: str,
+    first_buy_sui: float
+) -> dict:
+    """Launch token with x402 payment."""
+    client = SuiClient(SuiConfig.default())
+
+    # Step 1: Get payment invoice
+    invoice_resp = httpx.get(f"{BACKEND_URL}/api/v1/payment/invoice")
+    invoice = invoice_resp.json()
+    print(f"Invoice: {invoice['invoiceId']} for {invoice['amountSui']} SUI")
+
+    # Step 2: Send payment (SUI transfer to backend wallet)
+    # In production, use pysui to send SUI to invoice['payTo']
+    payment_tx = (
+        Transaction()
+        .split_coin(coin, [int(invoice['amountSui'] * 1e9)])
+        .transfer(recipient, invoice['payTo'])
+    )
+    # Sign and execute...
+    payment_digest = "your_payment_tx_digest"
+
+    # Step 3: Confirm payment with backend
+    confirm_resp = httpx.post(
+        f"{BACKEND_URL}/api/v1/payment/confirm",
+        json={"invoiceId": invoice["invoiceId"], "txDigest": payment_digest}
+    )
+    confirm = confirm_resp.json()
+    print(f"Payment status: {confirm['status']}")
+
+    # Step 4: Now call auto-create with payment proof
+    auto_create_resp = httpx.post(
+        f"{BACKEND_URL}/api/v1/tokens/auto-create",
+        json={
+            "name": token_name,
+            "symbol": ticker,
+            "description": description,
+            "initialSuiAmount": first_buy_sui,
+            "creator": wallet.address(),
+            "paymentInvoiceId": invoice["invoiceId"],
+            "paymentTxDigest": payment_digest,
+        }
+    )
+    return auto_create_resp.json()
+
+# Or via Python class (OdysseyLauncher with payment)
+from sui_token_launch.launcher import OdysseyLauncher, LaunchParams
+
+launcher = OdysseyLauncher()
+
+# Get invoice and pay
+invoice = launcher.get_payment_invoice()  # GET /payment/invoice
+launcher.pay_invoice(invoice, amount_sui=0.05)  # Send SUI
+
+# Auto-create with payment
+result = launcher.launch_token(params, payment_invoice_id=invoice["invoiceId"])
+```
+
+### Payment Configuration (Backend)
+
+```python
+# In backend/index.js
+PAYMENT_CONFIG = {
+    ENABLED: True,
+    PRICE_SUI: 0.05,  # 0.05 SUI per auto-create
+    PAY_TO_ADDRESS: '0x13ced8aca378f70af8244d1c6a3d8a9564ad1032028ebbbee65f5c3a22d12733',
+    PAYMENT_TIMEOUT_MS: 5 * 60 * 1000,  # 5 minutes
+}
+
+# Environment variables:
+# X402_ENABLED=true
+# X402_PRICE_SUI=0.05
+# X402_PAY_TO=0x_your_payment_wallet
+```
+
+### Error Responses
+
+```json
+// 402 Payment Required
+{
+  "error": "Payment required",
+  "paymentInfo": {
+    "priceSui": 0.05,
+    "payTo": "0x13ced8...",
+    "invoiceEndpoint": "GET /api/v1/payment/invoice"
+  }
+}
+
+// 402 Payment Not Confirmed
+{
+  "error": "Payment not confirmed",
+  "status": "pending",
+  "checkEndpoint": "/api/v1/payment/status/inv_xxx"
+}
+```
+
+### Disabling x402 (Development)
+
+```bash
+# In Railway environment variables:
+X402_ENABLED=false
+```
