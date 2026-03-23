@@ -9,10 +9,17 @@ tokens_out = (VIRTUAL_TOKEN_RESERVES * sui_in_mist) / (VIRTUAL_SUI_START + sui_i
 ## Constants
 
 ```python
-VIRTUAL_TOKEN_RESERVES = 1_066_708_773_000_000_000  # ~1.067B tokens (raw, no decimals)
-VIRTUAL_SUI_START = 666_730_000                     # ~0.667 SUI in mist
-TOKEN_DECIMALS = 6                                   # Token has 6 decimals
-SUI_DECIMALS = 9                                    # SUI has 9 decimals
+# Calibrated to Moonbags exact math:
+# 1 SUI → 1,597,603.59460839 tokens
+# 10 SUI → 15,763,546.79803245 tokens
+# 50 SUI → 74,418,604.65117544 tokens
+# 100 SUI → 139,130,434.78263023 tokens
+
+VIRTUAL_TOKEN_RESERVES = 1_066_666_667_000_000  # raw tokens (≈ 1.0667B display tokens)
+VIRTUAL_SUI_START = 666_666_666_666             # ~0.667 SUI in mist
+TOKEN_DECIMALS = 6                               # Token has 6 decimals
+SUI_DECIMALS = 9                               # SUI has 9 decimals
+GRADUATION_THRESHOLD = 2_000_000_000_000       # 2,000 SUI (2000 * 10^9 mist)
 ```
 
 ## Calculations
@@ -74,21 +81,19 @@ def get_effective_price(sui_amount: float, tokens_display: float) -> float:
 
 ## Pre-computed Values
 
-| SUI Input | Tokens (raw) | Tokens (display) | % of Supply | Price per Token |
-|-----------|---------------|------------------|-------------|-----------------|
-| 0.1 SUI   | 99,925,462,300 | 99,925 | 9.4% | 0.0000010007 SUI |
-| 1 SUI     | 1,600,063,170,000,000 | 1,600,063,170 | 50.0% | 0.000000625 SUI |
-| 5 SUI     | 7,800,230,000,000,000 | 7,800,230,000 | 73.1% | 0.000000641 SUI |
-| 10 SUI    | 15,759,860,000,000,000 | 15,759,860,000 | 91.2% | 0.000000635 SUI |
-| 25 SUI    | 38,000,000,000,000,000 | 38,000,000,000 | 97.0% | 0.000000658 SUI |
-| 50 SUI    | 74,440,000,000,000,000 | 74,440,000,000 | 98.7% | 0.000000672 SUI |
-| 100 SUI   | 145,680,000,000,000,000 | 145,680,000,000 | 99.5% | 0.000000687 SUI |
+| SUI Input | Tokens (display) | % of Supply | Price per Token |
+|-----------|------------------|-------------|-----------------|
+| 1 SUI     | 1,597,603.59     | 0.15%       | 0.000000626 SUI |
+| 10 SUI    | 15,763,546.80    | 1.48%       | 0.000000635 SUI |
+| 50 SUI    | 74,418,604.65    | 6.98%       | 0.000000672 SUI |
+| 100 SUI   | 139,130,434.78   | 13.05%      | 0.000000719 SUI |
+| 500 SUI   | 531,531,531.53   | 49.86%      | 0.000000941 SUI |
+| 1,000 SUI | 888,888,888.89   | 83.33%      | 0.000001125 SUI |
+| 2,000 SUI | 1,280,000,000.00 | 100% (graduation) | 0.000001562 SUI |
 
-## Key Insights
+## Graduation
 
-1. **Front-loaded liquidity**: Most tokens are available at low SUI amounts
-2. **Price increases with size**: Larger buys have worse effective price
-3. **Slippage is significant**: 1 SUI vs 100 SUI shows ~10% price impact
+Tokens graduate to Cetus DEX when the bonding curve reaches 2,000 SUI in volume. At that point, the pool migrates to a concentrated liquidity AMM.
 
 ## Slippage Considerations
 
@@ -102,8 +107,8 @@ def apply_slippage(tokens_raw: int, bps: int = SLIPPAGE_BPS) -> int:
     return tokens_raw * (10000 - bps) // 10000
 
 # Example
-min_tokens = apply_slippage(1_600_063_170_000_000)
-# Result: 1,592,062,866,700,000 (0.5% slippage applied)
+min_tokens = apply_slippage(1_597_603_594_608)
+# Result: 1,589_614_576_695 (0.5% slippage applied)
 ```
 
 ## Volume Share (Staking Rewards)
