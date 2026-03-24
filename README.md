@@ -79,7 +79,7 @@ TOKEN_DECIMALS = 6
 
 | Contract          | Address |
 |-------------------|---------|
-| Odyssey Package   | `0x50e60400cc2ea760b5fb8380fa3f1fc0a94dfc592ec78487313d21b50af846da` |
+| Odyssey Package   | `0x65b141fdbd43af65528c8bcfb65d0b79ba23e59da87185904c3490ec1cddb13d` |
 | Module            | `moonbags` |
 
 ## Status

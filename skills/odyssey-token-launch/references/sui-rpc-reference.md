@@ -118,7 +118,7 @@ for obj in result.created:
 
 ```python
 events = client.get_events({
-    "MoveEventType": "0x50e60400cc2ea760b5fb8380fa3f1fc0a94dfc592ec78487313d21b50af846da::moonbags::PoolCreated"
+    "MoveEventType": "0x65b141fdbd43af65528c8bcfb65d0b79ba23e59da87185904c3490ec1cddb13d::moonbags::PoolCreated"
 })
 
 for event in events:
@@ -132,7 +132,7 @@ for event in events:
 # After creating a pool, listen for PoolCreated event
 pool_created_events = client.get_events({
     "MoveEvent": {
-        "package": "0x50e60400cc2ea760b5fb8380fa3f1fc0a94dfc592ec78487313d21b50af846da",
+        "package": "0x65b141fdbd43af65528c8bcfb65d0b79ba23e59da87185904c3490ec1cddb13d",
         "module": "moonbags"
     }
 })

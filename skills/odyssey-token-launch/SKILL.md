@@ -133,7 +133,7 @@ TOKEN_DECIMALS = 6
 
 | Contract          | Address                                                |
 |-------------------|--------------------------------------------------------|
-| Odyssey Package   | `0x50e60400cc2ea760b5fb8380fa3f1fc0a94dfc592ec78487313d21b50af846da` |
+| Odyssey Package   | `0x65b141fdbd43af65528c8bcfb65d0b79ba23e59da87185904c3490ec1cddb13d` |
 | Module            | `moonbags`                                             |
 | Configuration     | `0x1fd45c94f890d3748e002c3636ea0dfc6e3bca0823269cb4119800369b43b07f` |
 | Stake Config      | `0x9e5b64163883d58ff8a52bc566b59f383ea88d69907986c19dc57018171e6f49` |
