@@ -4,7 +4,7 @@
 
 | Contract          | Address                                                |
 |-------------------|--------------------------------------------------------|
-| Odyssey Package   | `0x65b141fdbd43af65528c8bcfb65d0b79ba23e59da87185904c3490ec1cddb13d` |
+| Odyssey Package   | `0x7effdc4d75e28e63a3cac3b1c0bced07f9814edc4e3bbba832251e04c328c758` |
 | Module            | `moonbags`                                             |
 | Configuration     | `0x1fd45c94f890d3748e002c3636ea0dfc6e3bca0823269cb4119800369b43b07f` |
 | Stake Config      | `0x9e5b64163883d58ff8a52bc566b59f383ea88d69907986c19dc57018171e6f49` |
@@ -126,7 +126,7 @@ Full type string format for Move calls:
 
 Example:
 ```
-0x65b141fdbd43af65528c8bcfb65d0b79ba23e59da87185904c3490ec1cddb13d::moonbags::COIN_TEMPLATE
+0x7effdc4d75e28e63a3cac3b1c0bced07f9814edc4e3bbba832251e04c328c758::moonbags::COIN_TEMPLATE
 ```
 
 ---
@@ -140,7 +140,7 @@ const tx = new Transaction();
 
 // Example: Create pool
 tx.moveCall({
-  target: '0x65b141fdbd43af65528c8bcfb65d0b79ba23e59da87185904c3490ec1cddb13d::moonbags::create_and_lock_first_buy_with_fee',
+  target: '0x7effdc4d75e28e63a3cac3b1c0bced07f9814edc4e3bbba832251e04c328c758::moonbags::create_and_lock_first_buy_with_fee',
   typeArguments: ['0xYOUR_PACKAGE::your_module::YOUR_TOKEN'],
   arguments: [
     tx.object('0x1fd45c94f890d3748e002c3636ea0dfc6e3bca0823269cb4119800369b43b07f'), // config
