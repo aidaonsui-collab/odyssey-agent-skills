@@ -23,7 +23,7 @@ from typing import Optional, Dict, Any
 BACKEND_URL = "https://your-odyssey-backend.railway.app"
 
 # Odyssey Contract Addresses (Mainnet)
-ODYSSEY_PKG = "0x7effdc4d75e28e63a3cac3b1c0bced07f9814edc4e3bbba832251e04c328c758"
+ODYSSEY_PKG = "0x8127c4334e6a2e8ed51a631334762866efddd7c42cb20f131df3fed8db7bd870"
 MODULE = "moonbags"
 CONFIG_OBJ = "0x1fd45c94f890d3748e002c3636ea0dfc6e3bca0823269cb4119800369b43b07f"
 STAKE_CONFIG = "0x9e5b64163883d58ff8a52bc566b59f383ea88d69907986c19dc57018171e6f49"
