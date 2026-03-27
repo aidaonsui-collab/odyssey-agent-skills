@@ -1,131 +1,70 @@
-# Bonding Curve Math
+# Bonding Curve Math Reference
 
-## Formula
+## On-chain Constants (live mainnet)
 
 ```
-tokens_out = (VIRTUAL_TOKEN_RESERVES * sui_in_mist) / (VIRTUAL_SUI_START + sui_in_mist)
+VIRTUAL_TOKEN_RESERVES = 2,131,961,013,243,971   (6 decimals → ~2.13T tokens)
+VIRTUAL_SUI_RESERVES   = 2,001,287,378,847        (9 decimals → ~2001 SUI)
+GRADUATION_THRESHOLD   = 2,000,000,000,000,000    (9 decimals → 2000 SUI)
+TOKEN_DECIMALS         = 6
+SUI_DECIMALS           = 9
+PLATFORM_FEE_BPS       = 200   (2%)
 ```
 
-## Constants
+## Price
 
 ```python
-# Calibrated to Moonbags exact math:
-# 1 SUI → 1,597,603.59460839 tokens
-# 10 SUI → 15,763,546.79803245 tokens
-# 50 SUI → 74,418,604.65117544 tokens
-# 100 SUI → 139,130,434.78263023 tokens
-
-VIRTUAL_TOKEN_RESERVES = 1_066_666_667_000_000  # raw tokens (≈ 1.0667B display tokens)
-VIRTUAL_SUI_START = 666_666_666_666             # ~0.667 SUI in mist
-TOKEN_DECIMALS = 6                               # Token has 6 decimals
-SUI_DECIMALS = 9                               # SUI has 9 decimals
-GRADUATION_THRESHOLD = 2_000_000_000_000       # 2,000 SUI (2000 * 10^9 mist)
+price_sui_per_token = virtual_sui / 1e9 / (virtual_token / 1e6)
 ```
 
-## Calculations
-
-### Buy: SUI → Tokens
+## Tokens out (buy)
 
 ```python
-def calculate_buy_tokens(sui_amount: float) -> tuple[int, float]:
-    """
-    Calculate tokens received for SUI input.
-    
-    Args:
-        sui_amount: Amount of SUI to spend
-        
-    Returns:
-        Tuple of (raw_tokens, display_tokens)
-    """
-    sui_mist = int(sui_amount * 1e9)
-    
-    # Raw token calculation
-    tokens_raw = (VIRTUAL_TOKEN_RESERVES * sui_mist) // (VIRTUAL_SUI_START + sui_mist)
-    
-    # Apply decimal conversion
-    tokens_display = tokens_raw / (10 ** TOKEN_DECIMALS)
-    
-    return tokens_raw, tokens_display
+def tokens_out(sui_mist: int, v_sui: int, v_token: int) -> int:
+    """Raw token units out for sui_mist input (before fee deduction)."""
+    return (sui_mist * v_token) // (v_sui + sui_mist)
+
+# Human-readable
+def tokens_out_float(sui_float: float) -> float:
+    sui_mist = int(sui_float * 1e9)
+    raw = tokens_out(sui_mist, VIRTUAL_SUI_RESERVES, VIRTUAL_TOKEN_RESERVES)
+    return raw / 1e6
 ```
 
-### Sell: Tokens → SUI
+## SUI out (sell)
 
 ```python
-def calculate_sell_sui(token_amount: float) -> tuple[int, float]:
-    """
-    Calculate SUI received for tokens.
-    
-    Args:
-        token_amount: Amount of tokens to sell (display amount)
-        
-    Returns:
-        Tuple of (sui_mist, sui_display)
-    """
-    tokens_raw = int(token_amount * (10 ** TOKEN_DECIMALS))
-    
-    sui_mist = (VIRTUAL_SUI_START * tokens_raw) // (VIRTUAL_TOKEN_RESERVES + tokens_raw)
-    sui_display = sui_mist / 1e9
-    
-    return sui_mist, sui_display
+def sui_out(token_raw: int, v_sui: int, v_token: int) -> int:
+    """Raw SUI mist out for token_raw input (before fee deduction)."""
+    return (token_raw * v_sui) // (v_token + token_raw)
 ```
 
-### Price Per Token
+## Slippage / min_out
+
+Always set a minimum output to protect against MEV/front-running:
 
 ```python
-def get_effective_price(sui_amount: float, tokens_display: float) -> float:
-    """Calculate effective price per token."""
-    if tokens_display == 0:
-        return 0.0
-    return sui_amount / tokens_display
+SLIPPAGE_BPS = 200  # 2%
+
+def min_out(expected: int, slippage_bps: int = SLIPPAGE_BPS) -> int:
+    return expected * (10000 - slippage_bps) // 10000
 ```
 
-## Pre-computed Values
-
-| SUI Input | Tokens (display) | % of Supply | Price per Token |
-|-----------|------------------|-------------|-----------------|
-| 1 SUI     | 1,597,603.59     | 0.15%       | 0.000000626 SUI |
-| 10 SUI    | 15,763,546.80    | 1.48%       | 0.000000635 SUI |
-| 50 SUI    | 74,418,604.65    | 6.98%       | 0.000000672 SUI |
-| 100 SUI   | 139,130,434.78   | 13.05%      | 0.000000719 SUI |
-| 500 SUI   | 531,531,531.53   | 49.86%      | 0.000000941 SUI |
-| 1,000 SUI | 888,888,888.89   | 83.33%      | 0.000001125 SUI |
-| 2,000 SUI | 1,280,000,000.00 | 100% (graduation) | 0.000001562 SUI |
-
-## Graduation
-
-Tokens graduate to Cetus DEX when the bonding curve reaches 2,000 SUI in volume. At that point, the pool migrates to a concentrated liquidity AMM.
-
-## Slippage Considerations
-
-When buying, apply slippage tolerance:
+## Bonding progress
 
 ```python
-SLIPPAGE_BPS = 50  # 0.5%
-
-def apply_slippage(tokens_raw: int, bps: int = SLIPPAGE_BPS) -> int:
-    """Calculate minimum tokens after slippage."""
-    return tokens_raw * (10000 - bps) // 10000
-
-# Example
-min_tokens = apply_slippage(1_597_603_594_608)
-# Result: 1,589_614_576_695 (0.5% slippage applied)
+def progress_pct(real_sui_raised_mist: int, threshold_mist: int = 2_000_000_000_000_000) -> float:
+    return real_sui_raised_mist / threshold_mist * 100
 ```
 
-## Volume Share (Staking Rewards)
-
-30% of trading fees go to AIDA stakers. The fee calculation:
+## Example
 
 ```python
-TRADING_FEE_BPS = 200  # 2%
-AIDA_STAKERS_FEE = 0.30  # 30% of fees
+# Buy 10 SUI worth of tokens
+sui_in = 10.0
+est_tokens = tokens_out_float(sui_in)
+# ≈ 10,636 tokens at current reserves
 
-def calculate_staker_rewards(trade_sui_amount: float) -> float:
-    """Calculate rewards going to AIDA stakers."""
-    fee = trade_sui_amount * (TRADING_FEE_BPS / 10000)
-    staker_share = fee * AIDA_STAKERS_FEE
-    return staker_share
-
-# Example: 10 SUI trade
-# Fee: 10 * 0.02 = 0.2 SUI
-# Staker rewards: 0.2 * 0.30 = 0.06 SUI
+# At graduation (2000 SUI raised), token migrates to Turbos DEX
+# Creator gets their locked tokens, AIDA stakers earned 30% of all fees
 ```
