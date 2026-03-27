@@ -1,188 +1,274 @@
 #!/usr/bin/env python3
 """
-Odyssey Token Launch Script
+Odyssey Token Launch Script — Direct On-chain via PTB
 
-Complete token launch workflow with x402 payment.
+Launches a token on Odyssey 2.0 bonding curve with:
+  TX 1: Publish unique coin package (bytecode patching)
+  TX 2: Create bonding curve pool with first buy
+
+Requires: pysui >= 0.50.0  OR  direct JSON-RPC via httpx
 """
 
-import asyncio
 import argparse
+import asyncio
+import base64
+import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
 
-# Add parent to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ── Contract addresses ────────────────────────────────────────────────────────
+PACKAGE    = "0xf1c7fe9b6ad3c243f794d41e87fab502883d5fc27e005d72e94fe64bbf08c69b"
+CONFIG     = "0xfb774b5c4902d7d39e899388f520db0e2b1a6dca72687803b894d7d67eca9326"
+STAKE_CFG  = "0x312216a4b80aa2665be3539667ef3749fafb0bde8c8ff529867ca0f0dc13bc18"
+LOCK_CFG   = "0x7b3f064b45911affde459327ba394f2aa8782539d9b988c4986ee71c5bd34059"
+CLOCK      = "0x0000000000000000000000000000000000000000000000000000000000000006"
+SUI_META   = "0x9258181f5ceac8dbffb7030890243caed69a9599d2886d957a9cb7656af3bdb3"
+RPC_URL    = os.getenv("SUI_RPC_URL", "https://fullnode.mainnet.sui.io")
+
+# Coin template bytecode — COIN_TEMPLATE / coin_template / Token / Token Name
+# are placeholder strings that get patched at runtime with the actual ticker
+COIN_BYTECODE_B64 = (
+    "oRzrCwYAAAAKAQAMAgweAyocBEYIBU5RB58BqwEIygJgBqoDGwrFAwUMygMtAAcBDAIGAg8CEAIRAAACAAEC"
+    "BwEAAAIBDAEAAQIDDAEAAQQEAgAFBQcAAAoAAQABCwEEAQACCAYHAQIDDQsBAQwEDggJAAEDAgUDCgMMAgq"
+    "AABwgEAAILAgEIAAsDAQgAAQgFAQsBAQkAAQgABwkAAgoCCgIKAgsBAQgFBwgEAgsDAQkACwIBCQABBggE"
+    "AQUBCwIBCAACCQAFAQsDAQgADUNPSU5fVEVNUExBVEUMQ29pbk1ldGFkYXRhBk9wdGlvbgtUcmVhc3VyeU"
+    "NhcAlUeENvbnRleHQDVXJsBGNvaW4NY29pbl90ZW1wbGF0ZQ9jcmVhdGVfY3VycmVuY3kLZHVtbXlfZmll"
+    "bGQEaW5pdARub25lBm9wdGlvbg9wdWJsaWNfdHJhbnNmZXIGc2VuZGVyCHRyYW5zZmVyCnR4X2NvbnRleH"
+    "QDdXJsV6zO2JBHJ3Lh42Zr3Y84+I3JoNOWqP5B/vpOkbfvtSIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACCgIGBVRva2VuCgILClRva2VuIE5hbWUKAgEA"
+    "AAIBCQEAAAAAAhULADEGBwAHAQcCOAAKATgBDAIMAwsCCgEuEQQ4AgsDCwEuEQQ4AwIA"
+)
+
+# ── Bonding curve math ────────────────────────────────────────────────────────
+# On-chain constants (from Configuration object on mainnet)
+V_TOKEN_RAW  = 2_131_961_013_243_971   # virtual token reserves (6 decimals)
+V_SUI_RAW    = 2_001_287_378_847       # virtual SUI reserves (9 decimals)
+TOKEN_DEC    = 6
+SUI_DEC      = 9
 
 
-# ============== CONFIG ==============
+def tokens_out(sui_mist: int) -> float:
+    """Tokens received for sui_mist input (approximate, ignores fee)."""
+    raw = (sui_mist * V_TOKEN_RAW) / (V_SUI_RAW + sui_mist)
+    return raw / 10 ** TOKEN_DEC
 
-BACKEND_URL = os.getenv("ODYSSEY_BACKEND_URL", "https://your-odyssey-backend.railway.app")
-PAYMENT_TIMEOUT_MS = 5 * 60 * 1000  # 5 minutes
+
+def current_price_sui() -> float:
+    """Current price in SUI per token."""
+    return (V_SUI_RAW / 10 ** SUI_DEC) / (V_TOKEN_RAW / 10 ** TOKEN_DEC)
 
 
-# ============== DATA CLASSES ==============
+# ── Bytecode patching ─────────────────────────────────────────────────────────
+
+def patch_bytecode(symbol: str, name: str) -> str:
+    """
+    Patch coin_template bytecode with actual ticker symbol and token name.
+    Replaces length-prefixed placeholder strings in-place.
+    Returns patched base64.
+    """
+    sym_upper = symbol.upper().replace(" ", "")
+    sym_lower = sym_upper.lower()
+
+    data = bytearray(base64.b64decode(COIN_BYTECODE_B64))
+
+    def find_and_replace(placeholder: str, replacement: str):
+        enc_old = placeholder.encode()
+        enc_new = replacement.encode()
+        target  = bytes([len(enc_old)]) + enc_old
+        pos = bytes(data).find(target)
+        if pos == -1:
+            raise ValueError(f"Placeholder '{placeholder}' not found in bytecode")
+        new_bytes = bytes([len(enc_new)]) + enc_new
+        data[pos : pos + len(target)] = new_bytes
+
+    # Apply back-to-front so earlier offsets stay valid
+    replacements = [
+        ("COIN_TEMPLATE", sym_upper),
+        ("coin_template", sym_lower),
+        ("Token Name",    name),
+        ("Token",         sym_upper),
+    ]
+    # Sort by position descending
+    with_pos = []
+    tmp = bytearray(data)
+    for ph, rep in replacements:
+        enc = ph.encode()
+        target = bytes([len(enc)]) + enc
+        pos = bytes(tmp).find(target)
+        if pos == -1:
+            raise ValueError(f"'{ph}' not found")
+        with_pos.append((pos, ph, rep))
+
+    for pos, ph, rep in sorted(with_pos, key=lambda x: -x[0]):
+        enc_old = ph.encode()
+        enc_new = rep.encode()
+        target  = bytes([len(enc_old)]) + enc_old
+        new_bytes = bytes([len(enc_new)]) + enc_new
+        data[pos : pos + len(target)] = new_bytes
+
+    return base64.b64encode(bytes(data)).decode()
+
+
+# ── RPC helpers ───────────────────────────────────────────────────────────────
+
+async def rpc(method: str, params: list) -> dict:
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(RPC_URL, json={
+            "jsonrpc": "2.0", "id": 1, "method": method, "params": params
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        if "error" in data:
+            raise RuntimeError(f"RPC error: {data['error']}")
+        return data["result"]
+
+
+async def get_sui_balance(address: str) -> int:
+    result = await rpc("suix_getBalance", [address, "0x2::sui::SUI"])
+    return int(result.get("totalBalance", 0))
+
+
+async def get_pool_state(pool_id: str) -> dict:
+    result = await rpc("sui_getObject", [pool_id, {"showContent": True}])
+    fields = result["data"]["content"]["fields"]
+    return {
+        "virtual_sui":   int(fields["virtual_sui_reserves"]),
+        "virtual_token": int(fields["virtual_token_reserves"]),
+        "real_sui":      int(fields["real_sui_reserves"]["fields"]["balance"]),
+        "threshold":     int(fields["threshold"]),
+        "is_completed":  fields["is_completed"],
+        "progress":      int(fields["real_sui_reserves"]["fields"]["balance"]) / int(fields["threshold"]) * 100,
+    }
+
+
+# ── Launch params ─────────────────────────────────────────────────────────────
 
 @dataclass
 class LaunchParams:
-    name: str
-    ticker: str
-    description: str = ""
-    first_buy_sui: float = 50.0
-    migrate_to: int = 0  # 0=Cetus, 1=Turbos
+    name:             str
+    symbol:           str
+    description:      str   = ""
+    image_url:        str   = ""
+    twitter:          str   = ""
+    telegram:         str   = ""
+    website:          str   = ""
+    first_buy_sui:    float = 50.0
     target_raise_sui: float = 2000.0
-    image_url: str = ""
-    twitter: str = ""
-    telegram: str = ""
-    website: str = ""
+    migrate_to:       int   = 1      # 1=Turbos (only supported currently)
 
 
-@dataclass
-class Invoice:
-    invoice_id: str
-    amount_sui: float
-    pay_to: str
-    expires_at: int
+# ── Main launch flow ──────────────────────────────────────────────────────────
 
+async def simulate_launch(params: LaunchParams):
+    """Print what the launch would do without executing."""
+    print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("  🚀 ODYSSEY TOKEN LAUNCH — DRY RUN")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"  Name:         {params.name}")
+    print(f"  Symbol:       ${params.symbol.upper()}")
+    print(f"  Description:  {params.description or '(none)'}")
+    print(f"  First buy:    {params.first_buy_sui} SUI")
+    print(f"  Target raise: {params.target_raise_sui} SUI")
+    print(f"  Migrate to:   {'Turbos' if params.migrate_to == 1 else 'Cetus'}")
+    print()
 
-# ============== BONDING CURVE MATH ==============
+    est_tokens = tokens_out(int(params.first_buy_sui * 1e9))
+    price      = current_price_sui()
+    fee        = params.first_buy_sui * 0.02
 
-VIRTUAL_TOKEN_RESERVES = 1_066_708_773_000_000_000
-VIRTUAL_SUI_START = 666_730_000
-TOKEN_DECIMALS = 6
+    print(f"  📊 Estimated tokens from first buy: {est_tokens:,.2f} ${params.symbol.upper()}")
+    print(f"  💰 Current price:                  {price:.10f} SUI")
+    print(f"  💸 Platform fee (2%):              {fee:.4f} SUI")
+    print()
+    print("  TX 1: Publish coin package (unique bytecode per ticker)")
+    print(f"         → Coin type: 0x<NEW_PKG>::{params.symbol.lower()}::{params.symbol.upper()}")
+    print("  TX 2: create_and_lock_first_buy_with_fee")
+    print(f"         → Pool created on Odyssey bonding curve")
+    print(f"         → {est_tokens:,.2f} ${params.symbol.upper()} locked for creator")
+    print()
 
+    # Validate bytecode patching
+    try:
+        patched = patch_bytecode(params.symbol, params.name)
+        decoded = base64.b64decode(patched)
+        sym_ok  = params.symbol.upper().encode() in decoded
+        mod_ok  = params.symbol.lower().encode() in decoded
+        tmpl_ok = b"COIN_TEMPLATE" not in decoded
+        print(f"  ✅ Bytecode patching: {'OK' if sym_ok and mod_ok and tmpl_ok else 'FAILED'}")
+        print(f"     Struct: {params.symbol.upper()} ✓" if sym_ok else "     Struct: FAILED ✗")
+        print(f"     Module: {params.symbol.lower()} ✓" if mod_ok else "     Module: FAILED ✗")
+        print(f"     Template removed: ✓" if tmpl_ok else "     Template still present: ✗")
+    except Exception as e:
+        print(f"  ❌ Bytecode patching failed: {e}")
 
-def calculate_tokens(sui_amount: float) -> float:
-    """Calculate tokens received for SUI input."""
-    sui_mist = int(sui_amount * 1e9)
-    tokens_raw = (VIRTUAL_TOKEN_RESERVES * sui_mist) // (VIRTUAL_SUI_START + sui_mist)
-    return tokens_raw / (10 ** TOKEN_DECIMALS)
+    print()
+    print("  ℹ️  Run without --dry-run to execute on-chain")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
-
-# ============== PAYMENT FLOW ==============
-
-async def get_invoice() -> Invoice:
-    """Get a payment invoice from backend."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{BACKEND_URL}/api/v1/payment/invoice", timeout=10.0)
-        resp.raise_for_status()
-        data = resp.json()
-        return Invoice(
-            invoice_id=data["invoiceId"],
-            amount_sui=data["amountSui"],
-            pay_to=data["payTo"],
-            expires_at=data["expiresAt"]
-        )
-
-
-async def check_payment_status(invoice_id: str) -> dict:
-    """Check payment status for an invoice."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{BACKEND_URL}/api/v1/payment/status/{invoice_id}",
-            timeout=10.0
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def confirm_payment(invoice_id: str, tx_digest: str) -> dict:
-    """Confirm payment with transaction digest."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{BACKEND_URL}/api/v1/payment/confirm",
-            json={"invoiceId": invoice_id, "txDigest": tx_digest},
-            timeout=10.0
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-
-# ============== LAUNCH FLOW ==============
-
-async def launch_token(params: LaunchParams, invoice: Invoice, tx_digest: str) -> dict:
-    """Launch token with payment proof."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{BACKEND_URL}/api/v1/tokens/auto-create",
-            json={
-                "name": params.name,
-                "symbol": params.ticker,
-                "description": params.description,
-                "initialSuiAmount": params.first_buy_sui,
-                "migrateTo": params.migrate_to,
-                "creator": "",  # Will be filled by backend
-                "paymentInvoiceId": invoice.invoice_id,
-                "paymentTxDigest": tx_digest,
-            },
-            timeout=30.0
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-
-# ============== MAIN ==============
 
 async def main():
-    parser = argparse.ArgumentParser(description="Launch token on Odyssey 2.0")
-    parser.add_argument("--name", required=True, help="Token name")
-    parser.add_argument("--ticker", "-t", required=True, help="Ticker symbol")
-    parser.add_argument("--sui", "-s", type=float, default=50.0, help="First buy SUI")
-    parser.add_argument("--description", "-d", default="", help="Token description")
-    parser.add_argument("--migrate", "-m", choices=["cetus", "turbos"], default="cetus",
-                       help="Migration target")
-    parser.add_argument("--target", type=float, default=2000.0, help="Target raise")
-    parser.add_argument("--dry-run", action="store_true", help="Simulate only")
-    
+    parser = argparse.ArgumentParser(
+        description="Launch a token on Odyssey 2.0 bonding curve"
+    )
+    parser.add_argument("--name",        required=True,  help="Token name (e.g. 'Moon Dog')")
+    parser.add_argument("--symbol", "-t",required=True,  help="Ticker symbol (e.g. MOON)")
+    parser.add_argument("--description", default="",     help="Token description")
+    parser.add_argument("--image",       default="",     help="Image URL")
+    parser.add_argument("--twitter",     default="",     help="Twitter/X handle or URL")
+    parser.add_argument("--telegram",    default="",     help="Telegram URL")
+    parser.add_argument("--website",     default="",     help="Website URL")
+    parser.add_argument("--sui",    "-s",type=float, default=50.0,   help="First buy SUI amount")
+    parser.add_argument("--target",      type=float, default=2000.0, help="Graduation target (SUI)")
+    parser.add_argument("--migrate",     choices=["turbos"], default="turbos",
+                        help="DEX to graduate to (turbos only currently)")
+    parser.add_argument("--pool",        help="Pool ID to query state (no launch)")
+    parser.add_argument("--dry-run",     action="store_true", help="Simulate — no transactions")
     args = parser.parse_args()
-    
+
+    # Query pool state mode
+    if args.pool:
+        print(f"\n📊 Pool state for {args.pool}")
+        state = await get_pool_state(args.pool)
+        price = (state["virtual_sui"] / 1e9) / (state["virtual_token"] / 1e6)
+        print(f"  Price:      {price:.10f} SUI/token")
+        print(f"  Real SUI:   {state['real_sui'] / 1e9:.4f} SUI raised")
+        print(f"  Progress:   {state['progress']:.2f}%")
+        print(f"  Graduated:  {state['is_completed']}")
+        return
+
     params = LaunchParams(
         name=args.name,
-        ticker=args.ticker.upper(),
+        symbol=args.symbol.upper().replace(" ", ""),
         description=args.description,
+        image_url=args.image,
+        twitter=args.twitter,
+        telegram=args.telegram,
+        website=args.website,
         first_buy_sui=args.sui,
-        migrate_to=0 if args.migrate == "cetus" else 1,
-        target_raise_sui=args.target
+        target_raise_sui=args.target,
+        migrate_to=1,  # Turbos
     )
-    
-    print(f"🚀 Launching {params.name} (${params.ticker})")
-    print(f"   First buy: {params.first_buy_sui} SUI")
-    print(f"   Target: {params.target_raise_sui} SUI")
-    print(f"   Migrate to: {args.migrate.upper()}")
-    print()
-    
-    # Calculate expected tokens
-    expected_tokens = calculate_tokens(params.first_buy_sui)
-    print(f"   Expected tokens: {expected_tokens:,.2f}")
-    print()
-    
+
     if args.dry_run:
-        print("✅ Dry run - no transactions executed")
+        await simulate_launch(params)
         return
-    
-    # Step 1: Get invoice
-    print("📋 Step 1: Getting payment invoice...")
-    try:
-        invoice = await get_invoice()
-        print(f"   Invoice: {invoice.invoice_id}")
-        print(f"   Amount: {invoice.amount_sui} SUI")
-        print(f"   Pay to: {invoice.pay_to[:20]}...")
-    except Exception as e:
-        print(f"   ❌ Failed to get invoice: {e}")
-        print("   Make sure X402_ENABLED=true on backend")
-        return
-    
+
+    # Live execution requires a Sui wallet integration
+    # Use pysui, suibase, or build your own PTB signer
+    print("\n❌ Live execution not implemented in this script.")
+    print("   The launch flow requires two on-chain transactions:")
+    print("   1. tx.publish(patched_bytecode) → get TreasuryCap + packageId")
+    print("   2. tx.moveCall(create_and_lock_first_buy_with_fee, ...)")
     print()
-    print("⚠️  PAYMENT REQUIRED")
-    print(f"   Send exactly {invoice.amount_sui} SUI to:")
-    print(f"   {invoice.pay_to}")
-    print(f"   With memo: {invoice.invoice_id}")
+    print("   Integrate with:")
+    print("   - pysui: https://github.com/FrankC01/pysui")
+    print("   - @mysten/sui SDK (TypeScript) — see lib/coinPublish.ts in theodyssey2")
     print()
-    print("   Then call with --confirm <tx_digest>")
-    print()
+    print("   Run with --dry-run to validate parameters.\n")
 
 
 if __name__ == "__main__":
