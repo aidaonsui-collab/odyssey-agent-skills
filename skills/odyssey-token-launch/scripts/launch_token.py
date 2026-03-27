@@ -44,22 +44,25 @@ COIN_BYTECODE_B64 = (
 )
 
 # ── Bonding curve math ────────────────────────────────────────────────────────
-# On-chain constants (from Configuration object on mainnet)
-V_TOKEN_RAW  = 2_131_961_013_243_971   # virtual token reserves (6 decimals)
-V_SUI_RAW    = 2_001_287_378_847       # virtual SUI reserves (9 decimals)
+# Initial pool constants from Configuration object on mainnet.
+# NOTE: These are STARTING values. A live pool's reserves shift with every trade.
+# For accurate buy/sell estimates, always fetch live pool state from chain.
+V_TOKEN_INIT = 533_333_333_500_000   # initial virtual token reserves (6 decimals)
+V_SUI_INIT   = 2_000_000_000_000     # initial virtual SUI reserves (= graduation threshold, 9 dec)
 TOKEN_DEC    = 6
 SUI_DEC      = 9
 
 
-def tokens_out(sui_mist: int) -> float:
-    """Tokens received for sui_mist input (approximate, ignores fee)."""
-    raw = (sui_mist * V_TOKEN_RAW) / (V_SUI_RAW + sui_mist)
+def tokens_out_estimate(sui_mist: int) -> float:
+    """Estimate tokens from a NEW pool (uses initial reserves). Fetch live state for accuracy."""
+    raw = (sui_mist * V_TOKEN_INIT) // (V_SUI_INIT + sui_mist)
     return raw / 10 ** TOKEN_DEC
 
 
-def current_price_sui() -> float:
-    """Current price in SUI per token."""
-    return (V_SUI_RAW / 10 ** SUI_DEC) / (V_TOKEN_RAW / 10 ** TOKEN_DEC)
+def current_price_new_pool() -> float:
+    """Starting price in SUI per token (new pool only)."""
+    return (V_SUI_INIT / 10 ** SUI_DEC) / (V_TOKEN_INIT / 10 ** TOKEN_DEC)
+
 
 
 # ── Bytecode patching ─────────────────────────────────────────────────────────
@@ -176,8 +179,8 @@ async def simulate_launch(params: LaunchParams):
     print(f"  Migrate to:   {'Turbos' if params.migrate_to == 1 else 'Cetus'}")
     print()
 
-    est_tokens = tokens_out(int(params.first_buy_sui * 1e9))
-    price      = current_price_sui()
+    est_tokens = tokens_out_estimate(int(params.first_buy_sui * 1e9))
+    price      = current_price_new_pool()
     fee        = params.first_buy_sui * 0.02
 
     print(f"  📊 Estimated tokens from first buy: {est_tokens:,.2f} ${params.symbol.upper()}")
